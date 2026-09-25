@@ -1,7 +1,6 @@
 package com.hou.shortlink.link;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hou.shortlink.common.BizException;
@@ -23,7 +22,8 @@ import java.util.UUID;
 public class ShortLinkServiceImpl implements ShortLinkService {
 
     private final ShortLinkMapper shortLinkMapper;
-    private final AccessLogMapper accessLogMapper;
+    private final LinkCacheService linkCacheService;
+    private final AccessLogService accessLogService;
 
     @Override
     @Transactional  // 两次写库必须同生共死：短码回填失败的话，占位记录也要回滚
@@ -58,12 +58,12 @@ public class ShortLinkServiceImpl implements ShortLinkService {
                 .orderByDesc(ShortLink::getId);
         IPage<ShortLink> result = shortLinkMapper.selectPage(Page.of(page, size), wrapper);
         // 实体分页转 VO 分页（复用 MyBatis-Plus 的 convert，records/total 都带过去）
-        return result.convert(LinkVO::from);
+        return result.convert(link -> withPendingPv(LinkVO.from(link)));
     }
 
     @Override
     public LinkVO getOwn(Long userId, Long id) {
-        return LinkVO.from(getOwnEntity(userId, id));
+        return withPendingPv(LinkVO.from(getOwnEntity(userId, id)));
     }
 
     @Override
@@ -71,50 +71,41 @@ public class ShortLinkServiceImpl implements ShortLinkService {
         if (status == null || (status != 0 && status != 1)) {
             throw new BizException(ErrorCode.STATUS_INVALID);
         }
-        getOwnEntity(userId, id);  // 先校验存在且是自己的
+        ShortLink link = getOwnEntity(userId, id);  // 先校验存在且是自己的
         ShortLink update = new ShortLink();
         update.setId(id);
         update.setStatus(status);
         shortLinkMapper.updateById(update);  // 只更新非 null 字段，不会覆盖其他列
+        // Cache Aside 写顺序：先更新库，再删缓存，下次跳转重新从库加载
+        linkCacheService.evict(link.getShortCode());
     }
 
     @Override
     public void deleteOwn(Long userId, Long id) {
-        getOwnEntity(userId, id);
+        ShortLink link = getOwnEntity(userId, id);
         shortLinkMapper.deleteById(id);  // 全局配置了逻辑删除，实际执行的是 UPDATE deleted=1
+        linkCacheService.evict(link.getShortCode());
     }
 
     @Override
     public ShortLink findActiveByCode(String shortCode) {
-        ShortLink link = shortLinkMapper.selectOne(new LambdaQueryWrapper<ShortLink>()
-                .eq(ShortLink::getShortCode, shortCode)
-                .eq(ShortLink::getStatus, 1));  // 只跳"启用中"的，禁用的视同不存在
-        if (link == null) {
-            return null;
-        }
-        // 已过期视同不存在（expire_time 为 null 表示永不过期）
-        if (link.getExpireTime() != null && link.getExpireTime().isBefore(LocalDateTime.now())) {
-            return null;
-        }
-        return link;
+        // W3 起：缓存逻辑收敛到 LinkCacheService（Cache Aside：先 Redis 后 MySQL）
+        return linkCacheService.findActiveByCode(shortCode);
     }
 
     @Override
     public void recordAccess(ShortLink link, String ip, String userAgent) {
-        // 1. 访问日志表追加一条（只有 insert，没有 update，适合归档）
-        AccessLog log = new AccessLog();
-        log.setShortLinkId(link.getId());
-        log.setShortCode(link.getShortCode());
-        log.setIp(ip);
-        log.setUserAgent(userAgent != null && userAgent.length() > 512
-                ? userAgent.substring(0, 512) : userAgent);
-        log.setAccessTime(LocalDateTime.now());
-        accessLogMapper.insert(log);
-        // 2. pv 冗余计数 +1。用 "pv = pv + 1" 而不是查出数值再 set，
-        //    让数据库原子自增，避免并发下丢计数（经典面试题）
-        shortLinkMapper.update(null, new LambdaUpdateWrapper<ShortLink>()
-                .eq(ShortLink::getId, link.getId())
-                .setSql("pv = pv + 1"));
+        // 1. pv 计数从数据库 "pv = pv + 1" 改为 Redis 原子 INCR：
+        //    跳转高峰期没必要每次访问都写 MySQL，Redis 里的增量由定时任务定期回写（最终一致）
+        linkCacheService.incrPv(link.getId());
+        // 2. 访问日志异步落库，不阻塞 302 跳转
+        accessLogService.recordAsync(link, ip, userAgent);
+    }
+
+    /** 展示 pv = 数据库里已回写的 + Redis 里还没回写的增量（读写分离后是最终一致，不是强一致） */
+    private LinkVO withPendingPv(LinkVO vo) {
+        vo.setPv(vo.getPv() + linkCacheService.pendingPv(vo.getId()));
+        return vo;
     }
 
     /** 查"自己的"短链，不存在或不是自己的统一报同一个错，不暴露他人数据 */

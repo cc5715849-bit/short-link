@@ -33,7 +33,7 @@ public class RedirectController {
                     .contentType(new MediaType(MediaType.TEXT_HTML, StandardCharsets.UTF_8))
                     .body("<h1>404</h1><p>链接不存在或已失效</p>".getBytes(StandardCharsets.UTF_8));
         }
-        // 记录访问日志 + pv+1（W2 同步写；W3 优化为线程池异步，不阻塞跳转）
+        // pv 走 Redis 原子累加，访问日志线程池异步落库，跳转主链路不写 MySQL
         shortLinkService.recordAccess(link, resolveIp(request), request.getHeader("User-Agent"));
         // 用 302 临时跳转而不是 301：301 会被浏览器永久缓存，
         // 之后用户再点这个短链根本不会打到服务器，访问统计就全丢了

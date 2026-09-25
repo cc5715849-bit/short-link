@@ -27,6 +27,6 @@ public interface ShortLinkService {
     /** 跳转用：按短码查"启用中且未过期"的短链，查不到返回 null */
     ShortLink findActiveByCode(String shortCode);
 
-    /** 记录一次访问：写 access_log + 短链表 pv+1（W2 同步写，W3 优化为异步） */
+    /** 记录一次访问：Redis pv 原子累加 + 访问日志异步落库（都不阻塞跳转） */
     void recordAccess(ShortLink link, String ip, String userAgent);
 }
