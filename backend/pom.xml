@@ -95,6 +95,8 @@
                     <encoding>UTF-8</encoding>
                     <!-- JDK 23+ 默认禁用类路径上的注解处理器，必须显式开启，否则 Lombok 的 @Data 全部失效 -->
                     <proc>full</proc>
+                    <!-- 保留方法参数名：@PathVariable/@RequestParam 不写名字时靠反射读取 -->
+                    <parameters>true</parameters>
                 </configuration>
             </plugin>
             <plugin>

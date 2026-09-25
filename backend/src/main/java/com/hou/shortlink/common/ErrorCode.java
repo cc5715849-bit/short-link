@@ -15,6 +15,9 @@ public enum ErrorCode {
     USERNAME_OR_PASSWORD_WRONG(2002, "用户名或密码错误"),
     UNAUTHORIZED(2401, "未登录或登录已过期"),
 
+    LINK_NOT_FOUND(3001, "短链不存在或无权访问"),
+    STATUS_INVALID(3002, "status 只能为 0（禁用）或 1（启用）"),
+
     SYSTEM_ERROR(5000, "系统繁忙，请稍后再试");
 
     private final int code;
