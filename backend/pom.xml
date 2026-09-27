@@ -99,6 +99,35 @@
                     <parameters>true</parameters>
                 </configuration>
             </plugin>
+            <!-- 把各依赖 jar 的本地路径注册成 Maven 属性（如 ${org.mockito:mockito-core:jar}），
+                 供下面 surefire 的 -javaagent 引用，避免写死绝对路径 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>export-artifact-paths</id>
+                        <goals>
+                            <goal>properties</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- 单测 fork 的 JVM 参数：
+                 1) 把 mockito-core 作为启动 agent 加载：Mockito 的 inline mock maker 需要一个
+                    Instrumentation（类注入通道）。不在启动时给，它运行期就要"自挂载"——
+                    ByteBuddy 会 spawn 一个外部 java 进程来挂载，在中文用户目录（C:\Users\侯亮亮）
+                    下子进程读路径乱码，报 "Error opening zip file or JAR manifest missing"，
+                    所有 @SpringBootTest 直接全挂。启动时挂上，运行期就不再需要挂载
+                 2) EnableDynamicAgentLoading —— JDK 21+ 对 agent 有弃用警告，用它关闭 -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.1.2</version>
+                <configuration>
+                    <argLine>-javaagent:${org.mockito:mockito-core:jar} -XX:+EnableDynamicAgentLoading</argLine>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
