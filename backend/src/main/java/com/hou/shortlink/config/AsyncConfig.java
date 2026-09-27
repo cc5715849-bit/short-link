@@ -3,16 +3,18 @@ package com.hou.shortlink.config;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.ThreadPoolExecutor;
 
 /**
- * 访问日志异步线程池。
- * 不用 @Async 默认线程池的原因：默认的 SimpleAsyncTaskExecutor 每个任务 new 一个线程、
+ * 异步线程池 + 定时任务开关。
+ * 访问日志不用 @Async 默认线程池的原因：默认的 SimpleAsyncTaskExecutor 每个任务 new 一个线程、
  * 没有上限，高并发下会打爆内存。显式声明线程池才能讲清"核心线程/队列/拒绝策略"。
  */
 @EnableAsync
+@EnableScheduling
 @Configuration
 public class AsyncConfig {
 

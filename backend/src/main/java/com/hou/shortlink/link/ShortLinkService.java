@@ -2,6 +2,7 @@ package com.hou.shortlink.link;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.hou.shortlink.link.dto.CreateLinkRequest;
+import com.hou.shortlink.link.dto.LinkStatsVO;
 import com.hou.shortlink.link.dto.LinkVO;
 
 /**
@@ -17,6 +18,9 @@ public interface ShortLinkService {
 
     /** 短链详情（校验归属：只能看自己的） */
     LinkVO getOwn(Long userId, Long id);
+
+    /** 访问统计：总 PV/UV + 近 days 天每日趋势（days 缺省 7，最大 90） */
+    LinkStatsVO stats(Long userId, Long id, Integer days);
 
     /** 启用/禁用 */
     void updateStatus(Long userId, Long id, Integer status);

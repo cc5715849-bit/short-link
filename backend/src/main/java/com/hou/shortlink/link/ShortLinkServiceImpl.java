@@ -5,14 +5,22 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hou.shortlink.common.BizException;
 import com.hou.shortlink.common.ErrorCode;
+import com.hou.shortlink.common.RedisRateLimiter;
 import com.hou.shortlink.link.dto.CreateLinkRequest;
+import com.hou.shortlink.link.dto.LinkStatsVO;
 import com.hou.shortlink.link.dto.LinkVO;
+import com.hou.shortlink.stat.DailyAggRow;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 /**
  * 短链服务实现
@@ -22,12 +30,18 @@ import java.util.UUID;
 public class ShortLinkServiceImpl implements ShortLinkService {
 
     private final ShortLinkMapper shortLinkMapper;
+    private final AccessLogMapper accessLogMapper;
     private final LinkCacheService linkCacheService;
     private final AccessLogService accessLogService;
+    private final RedisRateLimiter rateLimiter;
 
     @Override
     @Transactional  // 两次写库必须同生共死：短码回填失败的话，占位记录也要回滚
     public LinkVO create(Long userId, CreateLinkRequest req) {
+        // 创建接口按用户限流：每分钟最多 10 次（Redis + Lua 固定窗口）
+        if (!rateLimiter.tryAcquire("rl:create:" + userId, 10, 60)) {
+            throw new BizException(ErrorCode.RATE_LIMIT);
+        }
         ShortLink link = new ShortLink();
         link.setUserId(userId);
         link.setOriginUrl(req.getOriginUrl());
@@ -64,6 +78,33 @@ public class ShortLinkServiceImpl implements ShortLinkService {
     @Override
     public LinkVO getOwn(Long userId, Long id) {
         return withPendingPv(LinkVO.from(getOwnEntity(userId, id)));
+    }
+
+    @Override
+    public LinkStatsVO stats(Long userId, Long id, Integer days) {
+        ShortLink link = getOwnEntity(userId, id);
+        int n = (days == null || days < 1) ? 7 : Math.min(days, 90);
+        LocalDate today = LocalDate.now();
+        LocalDate startDate = today.minusDays(n - 1L);
+        // 总 PV = 库值 + Redis 未回写增量；总 UV 按日志表 IP 精确去重
+        LinkStatsVO vo = new LinkStatsVO();
+        vo.setPv(link.getPv() + linkCacheService.pendingPv(link.getId()));
+        vo.setUv(accessLogMapper.countUv(link.getId()));
+        vo.setDays(n);
+        // 每日趋势：一次聚合查询，按日期放入 map，缺失的天补 0（前端画图需要连续日期）
+        Map<LocalDate, DailyAggRow> byDate = accessLogMapper
+                .aggregateDaily(link.getId(), startDate.atStartOfDay(), today.plusDays(1).atStartOfDay())
+                .stream()
+                .collect(Collectors.toMap(DailyAggRow::getStatDate, r -> r));
+        List<LinkStatsVO.DailyTrend> trend = new ArrayList<>();
+        for (LocalDate d = startDate; !d.isAfter(today); d = d.plusDays(1)) {
+            DailyAggRow row = byDate.get(d);
+            trend.add(new LinkStatsVO.DailyTrend(d,
+                    row == null ? 0L : row.getPv(),
+                    row == null ? 0L : row.getUv()));
+        }
+        vo.setTrend(trend);
+        return vo;
     }
 
     @Override

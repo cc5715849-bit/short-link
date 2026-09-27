@@ -3,6 +3,7 @@ package com.hou.shortlink.link;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -27,13 +28,16 @@ public class LinkCacheService {
     public static final String KEY_LINK_CODE = "link:code:";
     /** pv 计数 key 前缀，完整 key 形如 pv:link:123 */
     public static final String KEY_PV = "pv:link:";
+    /** pv 脏集合：本次回写周期内产生过访问的短链 id，定时任务只处理脏的 */
+    public static final String KEY_PV_DIRTY = "pv:dirty";
 
     /** 空值标记：表示"这个短码库里也不存在"，防止穿透 */
     private static final String EMPTY_MARKER = "NULL";
     private static final Duration LINK_TTL = Duration.ofMinutes(30);
     private static final Duration EMPTY_TTL = Duration.ofSeconds(60);
 
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final RedisTemplate<String, Object> redisTemplate;  // link:code 对象缓存，JSON 序列化
+    private final StringRedisTemplate stringRedisTemplate;      // pv 计数是纯字符串，和定时任务读写格式保持一致
     private final ShortLinkMapper shortLinkMapper;
 
     /** 跳转入口：先缓存后数据库 */
@@ -65,16 +69,17 @@ public class LinkCacheService {
         redisTemplate.delete(KEY_LINK_CODE + shortCode);
     }
 
-    /** pv 在 Redis 里原子累加（INCR），返回累加后的值 */
+    /** pv 在 Redis 里原子累加（INCR），并把短链 id 记入脏集合，供定时任务回写数据库 */
     public long incrPv(Long linkId) {
-        Long v = redisTemplate.opsForValue().increment(KEY_PV + linkId);
+        Long v = stringRedisTemplate.opsForValue().increment(KEY_PV + linkId);
+        stringRedisTemplate.opsForSet().add(KEY_PV_DIRTY, String.valueOf(linkId));
         return v == null ? 0 : v;
     }
 
     /** 还没回写到数据库的 pv 增量（展示时叠加到库里读出的 pv 上，最终一致） */
     public long pendingPv(Long linkId) {
-        Object v = redisTemplate.opsForValue().get(KEY_PV + linkId);
-        return v instanceof Number n ? n.longValue() : 0;
+        String v = stringRedisTemplate.opsForValue().get(KEY_PV + linkId);
+        return v == null ? 0 : Long.parseLong(v);
     }
 
     private static boolean isExpired(ShortLink link) {

@@ -6,6 +6,7 @@ package com.hou.shortlink.common;
  * 1xxx  通用/参数类
  * 2xxx  用户/认证类
  * 3xxx  短链类
+ * 4xxx  频控类
  */
 public enum ErrorCode {
 
@@ -17,6 +18,8 @@ public enum ErrorCode {
 
     LINK_NOT_FOUND(3001, "短链不存在或无权访问"),
     STATUS_INVALID(3002, "status 只能为 0（禁用）或 1（启用）"),
+
+    RATE_LIMIT(4001, "操作太频繁，请稍后再试"),
 
     SYSTEM_ERROR(5000, "系统繁忙，请稍后再试");
 

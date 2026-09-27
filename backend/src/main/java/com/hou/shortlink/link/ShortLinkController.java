@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.hou.shortlink.auth.JwtInterceptor;
 import com.hou.shortlink.common.Result;
 import com.hou.shortlink.link.dto.CreateLinkRequest;
+import com.hou.shortlink.link.dto.LinkStatsVO;
 import com.hou.shortlink.link.dto.LinkVO;
 import com.hou.shortlink.link.dto.StatusUpdateRequest;
 import jakarta.servlet.http.HttpServletRequest;
@@ -73,6 +74,14 @@ public class ShortLinkController {
     public Result<Void> delete(@PathVariable Long id, HttpServletRequest request) {
         shortLinkService.deleteOwn(currentUserId(request), id);
         return Result.success();
+    }
+
+    /** 访问统计：总 PV/UV + 近 N 天每日趋势 */
+    @GetMapping("/{id}/stats")
+    public Result<LinkStatsVO> stats(@PathVariable Long id,
+                                     @RequestParam(defaultValue = "7") Integer days,
+                                     HttpServletRequest request) {
+        return Result.success(shortLinkService.stats(currentUserId(request), id, days));
     }
 
     /** 从拦截器放进 request 的属性里取当前用户 id */
